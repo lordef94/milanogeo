@@ -110,7 +110,7 @@ def main():
     # Caricamento dati
     try:
         quartieri = load_geojson('quartieri_milano.geojson')
-        if quartieri is None:
+        if quartieri is None or not isinstance(quartieri, gpd.GeoDataFrame):
             st.error("Impossibile procedere senza i dati dei quartieri")
             return
 
