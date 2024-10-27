@@ -11,6 +11,15 @@ from pathlib import Path
 import warnings
 warnings.filterwarnings('ignore')
 
+# Funzione per caricare il GeoJSON
+def load_geojson(filepath):
+    """Carica un file GeoJSON e lo converte in GeoDataFrame"""
+    try:
+        return gpd.read_file(filepath)
+    except Exception as e:
+        st.error(f"Errore nel caricamento del GeoJSON: {str(e)}")
+        return None
+
 # Configurazione della cache
 @st.cache_data(ttl=3600)
 def get_street_network(place, network_type):
