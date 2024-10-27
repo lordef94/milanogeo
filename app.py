@@ -9,12 +9,13 @@ from streamlit_folium import st_folium
 import matplotlib.pyplot as plt
 from pathlib import Path
 import warnings
+import concurrent.futures
+
 warnings.filterwarnings('ignore')
 
 isochrone_cache = {}
 
 def load_geojson(filepath):
-    """Carica un file GeoJSON e lo converte in GeoDataFrame"""
     try:
         return gpd.read_file(filepath)
     except Exception as e:
@@ -22,7 +23,6 @@ def load_geojson(filepath):
         return None
 
 def get_amenities(place, tags):
-    """Scarica i POI da OpenStreetMap in base ai tag specificati"""
     try:
         amenities = ox.geometries_from_place(place, tags)
         return amenities
@@ -32,7 +32,6 @@ def get_amenities(place, tags):
 
 @st.cache_data(ttl=3600)
 def get_street_network(place, network_type):
-    """Scarica e proietta la rete stradale"""
     try:
         with st.spinner('Scaricamento della rete stradale...'):
             G = ox.graph_from_place(place, network_type=network_type)
@@ -43,7 +42,6 @@ def get_street_network(place, network_type):
         return None
 
 def calculate_isochrone(G, center_point, max_dist):
-    """Calcola l'isocrona per un punto dato"""
     try:
         center_point_proj = ox.projection.project_geometry(center_point, to_crs=G.graph['crs'])[0]
         center_node = ox.nearest_nodes(G, center_point_proj.x, center_point_proj.y)
@@ -57,7 +55,6 @@ def calculate_isochrone(G, center_point, max_dist):
         return None
 
 def calculate_connectivity_score(row, G, poi, max_distance):
-    """Calculate the connectivity score with caching."""
     if row['NIL'] in isochrone_cache:
         return isochrone_cache[row['NIL']]
     
@@ -73,6 +70,15 @@ def calculate_connectivity_score(row, G, poi, max_distance):
     isochrone_cache[row['NIL']] = score
     return score
 
+def parallel_connectivity_scores(quartieri, G, poi, max_distance):
+    """Calculate connectivity scores in parallel."""
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        results = list(executor.map(
+            lambda row: calculate_connectivity_score(row, G, poi, max_distance),
+            [row for _, row in quartieri.iterrows()]
+        ))
+    return results
+
 def main():
     st.set_page_config(page_title="Analisi Connettività Milano", page_icon="🏙️", layout="wide")
     st.title('Analisi della Connettività dei Quartieri di Milano')
@@ -87,11 +93,9 @@ def main():
         max_time = st.slider('Tempo massimo di viaggio (minuti):', min_value=5, max_value=60, value=15, step=5)
         show_services = st.checkbox('Mostra i servizi sulla mappa')
 
-        # Add a calculate button to trigger the computation
         if st.button('Calcola connettività'):
-            st.session_state['calculate'] = True  # Set state to trigger calculation
+            st.session_state['calculate'] = True
 
-    # Only execute if the calculate button is clicked
     if st.session_state.get('calculate', False):
         try:
             quartieri = load_geojson('quartieri_milano.geojson')
@@ -111,7 +115,9 @@ def main():
             with st.spinner('Calcolo della connettività in corso...'):
                 speed_m_per_sec = speed * 1000 / 3600
                 max_distance = speed_m_per_sec * max_time * 60
-                connectivity_scores = [calculate_connectivity_score(row, G, poi, max_distance) for _, row in quartieri.iterrows()]
+
+                # Parallel calculation of connectivity scores
+                connectivity_scores = parallel_connectivity_scores(quartieri, G, poi, max_distance)
 
                 quartieri['connettività'] = connectivity_scores
                 quartieri['punteggio_norm'] = quartieri['connettività'] / max(connectivity_scores)
