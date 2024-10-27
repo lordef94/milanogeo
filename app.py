@@ -11,7 +11,6 @@ from pathlib import Path
 import warnings
 warnings.filterwarnings('ignore')
 
-# Define a cache dictionary for isochrone and POI intersections
 isochrone_cache = {}
 
 def load_geojson(filepath):
@@ -59,7 +58,6 @@ def calculate_isochrone(G, center_point, max_dist):
 
 def calculate_connectivity_score(row, G, poi, max_distance):
     """Calculate the connectivity score with caching."""
-    # Check if result is already cached for this neighborhood
     if row['NIL'] in isochrone_cache:
         return isochrone_cache[row['NIL']]
     
@@ -67,13 +65,11 @@ def calculate_connectivity_score(row, G, poi, max_distance):
     isochrone = calculate_isochrone(G, centroid, max_distance)
     
     if isochrone is not None:
-        # Calculate and cache the number of POIs within the isochrone area
         services_in_area = poi[poi.intersects(isochrone)]
         score = len(services_in_area)
     else:
         score = 0
     
-    # Cache the result
     isochrone_cache[row['NIL']] = score
     return score
 
@@ -91,33 +87,39 @@ def main():
         max_time = st.slider('Tempo massimo di viaggio (minuti):', min_value=5, max_value=60, value=15, step=5)
         show_services = st.checkbox('Mostra i servizi sulla mappa')
 
-    try:
-        quartieri = load_geojson('quartieri_milano.geojson')
-        if quartieri is None:
-            st.error("Impossibile procedere senza i dati dei quartieri")
-            return
-        G = get_street_network('Milano, Italia', network_type)
-        if G is None:
-            st.error("Impossibile procedere senza la rete stradale")
-            return
-        tags = {'amenity': selected_services}
-        poi = get_amenities('Milano, Italia', tags)
-        if poi is None:
-            st.error("Impossibile procedere senza i dati dei servizi")
-            return
+        # Add a calculate button to trigger the computation
+        if st.button('Calcola connettività'):
+            st.session_state['calculate'] = True  # Set state to trigger calculation
 
-        with st.spinner('Calcolo della connettività in corso...'):
-            speed_m_per_sec = speed * 1000 / 3600
-            max_distance = speed_m_per_sec * max_time * 60
-            connectivity_scores = [calculate_connectivity_score(row, G, poi, max_distance) for _, row in quartieri.iterrows()]
+    # Only execute if the calculate button is clicked
+    if st.session_state.get('calculate', False):
+        try:
+            quartieri = load_geojson('quartieri_milano.geojson')
+            if quartieri is None:
+                st.error("Impossibile procedere senza i dati dei quartieri")
+                return
+            G = get_street_network('Milano, Italia', network_type)
+            if G is None:
+                st.error("Impossibile procedere senza la rete stradale")
+                return
+            tags = {'amenity': selected_services}
+            poi = get_amenities('Milano, Italia', tags)
+            if poi is None:
+                st.error("Impossibile procedere senza i dati dei servizi")
+                return
 
-            quartieri['connettività'] = connectivity_scores
-            quartieri['punteggio_norm'] = quartieri['connettività'] / max(connectivity_scores)
+            with st.spinner('Calcolo della connettività in corso...'):
+                speed_m_per_sec = speed * 1000 / 3600
+                max_distance = speed_m_per_sec * max_time * 60
+                connectivity_scores = [calculate_connectivity_score(row, G, poi, max_distance) for _, row in quartieri.iterrows()]
 
-        # Mapping and display code goes here...
+                quartieri['connettività'] = connectivity_scores
+                quartieri['punteggio_norm'] = quartieri['connettività'] / max(connectivity_scores)
 
-    except Exception as e:
-        st.error(f"Si è verificato un errore: {str(e)}")
+            # Display results (Mapping and additional code here)
+
+        except Exception as e:
+            st.error(f"Si è verificato un errore: {str(e)}")
 
 if __name__ == "__main__":
     main()
