@@ -12,17 +12,6 @@ from pathlib import Path
 import warnings
 warnings.filterwarnings('ignore')
 
-def load_geojson(filepath):
-    """Carica un file GeoJSON e lo converte in GeoDataFrame semplificato"""
-    try:
-        st.write(f"Tentativo di caricamento del file: {filepath}")
-        gdf = gpd.read_file(filepath)
-        st.write("File caricato con successo!")
-        return gdf.simplify(tolerance=0.001)
-    except Exception as e:
-        st.error(f"Errore nel caricamento del GeoJSON: {str(e)}")
-        return None
-
 # Funzione per caricare il GeoJSON
 @st.cache_data
 def load_geojson(filepath):
@@ -120,7 +109,7 @@ def main():
 
     # Caricamento dati
     try:
-        quartieri = load_geojson('quartieri_milano.geojson')
+        quartieri = load_geojson('/path/to/your/file/quartieri_milano.geojson')
         if quartieri is None or not isinstance(quartieri, gpd.GeoDataFrame):
             st.error("Impossibile procedere senza i dati dei quartieri")
             return
