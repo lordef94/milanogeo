@@ -11,25 +11,6 @@ from pathlib import Path
 import warnings
 warnings.filterwarnings('ignore')
 
-# Funzione per caricare il GeoJSON
-def load_geojson(filepath):
-    """Carica un file GeoJSON e lo converte in GeoDataFrame"""
-    try:
-        return gpd.read_file(filepath)
-    except Exception as e:
-        st.error(f"Errore nel caricamento del GeoJSON: {str(e)}")
-        return None
-
-# Funzione per ottenere POI da OpenStreetMap
-def get_amenities(place, tags):
-    """Scarica i POI da OpenStreetMap in base ai tag specificati"""
-    try:
-        amenities = ox.geometries_from_place(place, tags)
-        return amenities
-    except Exception as e:
-        st.warning(f"Errore nel recupero dei servizi: {str(e)}")
-        return None
-
 # Configurazione della cache
 @st.cache_data(ttl=3600)
 def get_street_network(place, network_type):
@@ -48,12 +29,8 @@ def get_street_network(place, network_type):
 def calculate_isochrone(G, center_point, max_dist):
     """Calcola l'isocrona per un punto dato"""
     try:
-        # Controlla se il grafo ha un CRS, altrimenti imposta un CRS predefinito
-        if 'crs' not in G.graph or G.graph['crs'] is None:
-            G = ox.project_graph(G, to_crs="EPSG:3857")  # Proietta a Mercator se non è definito
-
         # Proietta il punto centrale nello stesso CRS del grafo
-        center_point_proj = ox.project_gdf(gpd.GeoSeries([center_point]), to_crs=G.graph['crs']).iloc[0]
+        center_point_proj = ox.project_geometry(center_point, to_crs=G.graph['crs'])[0]
         
         # Trova il nodo più vicino
         center_node = ox.nearest_nodes(G, center_point_proj.x, center_point_proj.y)
@@ -63,25 +40,17 @@ def calculate_isochrone(G, center_point, max_dist):
         
         # Converti il subgrafo in GeoDataFrame
         nodes, edges = ox.graph_to_gdfs(subgraph)
-
-        # Verifica che il GeoDataFrame dei nodi non sia vuoto e abbia un CRS valido
-        if nodes.empty:
-            st.warning("Nessun nodo trovato nell'isocrona calcolata.")
-            return None
-        if nodes.crs is None:
-            nodes = nodes.set_crs(G.graph['crs'])  # Imposta il CRS del grafo sui nodi, se non presente
-
+        
         # Crea l'isocrona
         isochrone = nodes.unary_union.convex_hull
         
         # Riproietta l'isocrona in WGS84
-        isochrone = ox.project_gdf(gpd.GeoSeries([isochrone]), to_crs='EPSG:4326').iloc[0]
+        isochrone = ox.project_geometry(isochrone, G.graph['crs'], to_crs='EPSG:4326')[0]
         
         return isochrone
     except Exception as e:
         st.warning(f"Errore nel calcolo dell'isocrona: {str(e)}")
         return None
-
 
 def main():
     st.set_page_config(
