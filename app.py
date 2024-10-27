@@ -48,11 +48,10 @@ def get_street_network(place, network_type):
 def calculate_isochrone(G, center_point, max_dist):
     """Calcola l'isocrona per un punto dato"""
     try:
-        # Controlla che il grafo abbia un CRS
+        # Controlla se il grafo ha un CRS, altrimenti imposta un CRS predefinito
         if 'crs' not in G.graph or G.graph['crs'] is None:
-            st.error("Errore: il grafo non ha un sistema di coordinate di riferimento valido.")
-            return None
-        
+            G = ox.project_graph(G, to_crs="EPSG:3857")  # Proietta a Mercator se non è definito
+
         # Proietta il punto centrale nello stesso CRS del grafo
         center_point_proj = ox.project_gdf(gpd.GeoSeries([center_point]), to_crs=G.graph['crs']).iloc[0]
         
@@ -64,12 +63,14 @@ def calculate_isochrone(G, center_point, max_dist):
         
         # Converti il subgrafo in GeoDataFrame
         nodes, edges = ox.graph_to_gdfs(subgraph)
-        
-        # Verifica che il GeoDataFrame dei nodi non sia vuoto
+
+        # Verifica che il GeoDataFrame dei nodi non sia vuoto e abbia un CRS valido
         if nodes.empty:
             st.warning("Nessun nodo trovato nell'isocrona calcolata.")
             return None
-        
+        if nodes.crs is None:
+            nodes = nodes.set_crs(G.graph['crs'])  # Imposta il CRS del grafo sui nodi, se non presente
+
         # Crea l'isocrona
         isochrone = nodes.unary_union.convex_hull
         
