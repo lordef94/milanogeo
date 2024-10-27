@@ -7,20 +7,53 @@ import osmnx as ox
 import networkx as nx
 from streamlit_folium import st_folium
 import matplotlib.pyplot as plt
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import warnings
-from osmnx.projection import project_geometry
 warnings.filterwarnings('ignore')
 
 # Funzione per caricare il GeoJSON
+@st.cache_data
 def load_geojson(filepath):
-    """Carica un file GeoJSON e lo converte in GeoDataFrame"""
+    """Carica un file GeoJSON e lo converte in GeoDataFrame semplificato"""
     try:
-        return gpd.read_file(filepath)
+        gdf = gpd.read_file(filepath)
+        return gdf.simplify(tolerance=0.001)
     except Exception as e:
         st.error(f"Errore nel caricamento del GeoJSON: {str(e)}")
         return None
 
+# Configurazione della cache per la rete stradale
+@st.cache_data(ttl=3600)
+def get_street_network(place, network_type):
+    """Scarica e proietta la rete stradale solo per Milano"""
+    try:
+        with st.spinner('Scaricamento della rete stradale...'):
+            G = ox.graph_from_place(place, network_type=network_type, simplify=True, retain_all=False)
+            G = ox.project_graph(G)
+            return G
+    except Exception as e:
+        st.error(f"Errore nel recupero della rete stradale: {str(e)}")
+        return None
+
+# Calcolo dell'isocrona ottimizzato e memorizzato in cache
+@st.cache_data
+def calculate_isochrone(G, center_point, max_dist):
+    """Calcola e memorizza l'isocrona per un punto dato"""
+    try:
+        center_point_proj = ox.project_gdf(gpd.GeoSeries([center_point]), to_crs=G.graph['crs']).iloc[0]
+        center_node = ox.nearest_nodes(G, center_point_proj.x, center_point_proj.y)
+        subgraph = nx.ego_graph(G, center_node, radius=max_dist, distance='length')
+        nodes, edges = ox.graph_to_gdfs(subgraph)
+        isochrone = nodes.unary_union.convex_hull
+        isochrone = ox.project_gdf(gpd.GeoSeries([isochrone]), to_crs='EPSG:4326').iloc[0]
+        return isochrone
+    except Exception as e:
+        st.warning(f"Errore nel calcolo dell'isocrona: {str(e)}")
+        return None
+
+# Funzione per ottenere i servizi (POI) da OpenStreetMap
+@st.cache_data
 def get_amenities(place, tags):
     """Scarica i POI da OpenStreetMap in base ai tag specificati"""
     try:
@@ -30,46 +63,14 @@ def get_amenities(place, tags):
         st.warning(f"Errore nel recupero dei servizi: {str(e)}")
         return None
 
-# Configurazione della cache
-@st.cache_data(ttl=3600)
-def get_street_network(place, network_type):
-    """Scarica e proietta la rete stradale"""
-    try:
-        with st.spinner('Scaricamento della rete stradale...'):
-            # Scarica il grafo
-            G = ox.graph_from_place(place, network_type=network_type)
-            # Proietta il grafo nel sistema di coordinate UTM appropriato
-            G = ox.project_graph(G)
-            return G
-    except Exception as e:
-        st.error(f"Errore nel recupero della rete stradale: {str(e)}")
-        return None
-
-def calculate_isochrone(G, center_point, max_dist):
-    """Calcola l'isocrona per un punto dato"""
-    try:
-        # Proietta il punto centrale nello stesso CRS del grafo
-        center_point_proj = project_geometry(center_point, to_crs=G.graph['crs'])[0]
-        
-        # Trova il nodo più vicino
-        center_node = ox.nearest_nodes(G, center_point_proj.x, center_point_proj.y)
-        
-        # Calcola il subgrafo
-        subgraph = nx.ego_graph(G, center_node, radius=max_dist, distance='length')
-        
-        # Converti il subgrafo in GeoDataFrame
-        nodes, edges = ox.graph_to_gdfs(subgraph)
-        
-        # Crea l'isocrona
-        isochrone = nodes.unary_union.convex_hull
-        
-        # Riproietta l'isocrona in WGS84
-        isochrone = project_geometry(isochrone, G.graph['crs'], to_crs='EPSG:4326')[0]
-        
-        return isochrone
-    except Exception as e:
-        st.warning(f"Errore nel calcolo dell'isocrona: {str(e)}")
-        return None
+def calculate_connectivity_for_quarter(row, G, max_distance, poi):
+    centroid = row.geometry.centroid
+    isochrone = calculate_isochrone(G, centroid, max_distance)
+    if isochrone is not None:
+        services_in_area = poi[poi.intersects(isochrone)]
+        return len(services_in_area)
+    else:
+        return 0
 
 def main():
     st.set_page_config(
@@ -84,7 +85,6 @@ def main():
     with st.sidebar:
         st.header('Parametri di Analisi')
         
-        # Selezione dei servizi primari
         available_services = ['supermarket', 'gym', 'school', 'hospital', 'pharmacy']
         selected_services = st.multiselect(
             'Seleziona i servizi primari di interesse:',
@@ -92,7 +92,6 @@ def main():
             default=['supermarket', 'pharmacy']
         )
 
-        # Modalità di trasporto
         transport_mode = st.selectbox(
             'Modalità di trasporto:',
             ['A piedi', 'In auto']
@@ -101,7 +100,6 @@ def main():
         network_type = 'walk' if transport_mode == 'A piedi' else 'drive'
         speed = 5 if transport_mode == 'A piedi' else 40  # km/h
 
-        # Tempo massimo
         max_time = st.slider(
             'Tempo massimo di viaggio (minuti):',
             min_value=5, max_value=60, value=15, step=5
@@ -111,13 +109,11 @@ def main():
 
     # Caricamento dati
     try:
-        # Carica quartieri
         quartieri = load_geojson('quartieri_milano.geojson')
         if quartieri is None:
             st.error("Impossibile procedere senza i dati dei quartieri")
             return
 
-        # Scarica rete stradale e servizi
         G = get_street_network('Milano, Italia', network_type)
         if G is None:
             st.error("Impossibile procedere senza la rete stradale")
@@ -129,30 +125,16 @@ def main():
             st.error("Impossibile procedere senza i dati dei servizi")
             return
 
-        # Calcolo connettività
+        # Calcolo connettività ottimizzato
         with st.spinner('Calcolo della connettività in corso...'):
             speed_m_per_sec = speed * 1000 / 3600
             max_distance = speed_m_per_sec * max_time * 60
 
-            connectivity_scores = []
-            progress_bar = st.progress(0)
-            
-            for idx, row in quartieri.iterrows():
-                progress = (idx + 1) / len(quartieri)
-                progress_bar.progress(progress)
-                
-                centroid = row.geometry.centroid
-                try:
-                    isochrone = calculate_isochrone(G, centroid, max_distance)
-                    if isochrone is not None:
-                        services_in_area = poi[poi.intersects(isochrone)]
-                        score = len(services_in_area)
-                    else:
-                        score = 0
-                except Exception as e:
-                    st.warning(f"Errore nel calcolo del punteggio per il quartiere {row['NIL']}: {str(e)}")
-                    score = 0
-                connectivity_scores.append(score)
+            with ThreadPoolExecutor() as executor:
+                connectivity_scores = list(executor.map(
+                    lambda row: calculate_connectivity_for_quarter(row[1], G, max_distance, poi),
+                    quartieri.iterrows()
+                ))
 
             quartieri['connettività'] = connectivity_scores
             quartieri['punteggio_norm'] = quartieri['connettività'] / quartieri['connettività'].max()
@@ -161,10 +143,7 @@ def main():
         col1, col2 = st.columns([2, 1])
 
         with col1:
-            # Creazione mappa
             m = folium.Map(location=[45.4642, 9.19], zoom_start=12)
-
-            # Choropleth layer
             choropleth = folium.Choropleth(
                 geo_data=quartieri,
                 name='Connettività',
@@ -177,7 +156,6 @@ def main():
                 legend_name='Punteggio di Connettività'
             ).add_to(m)
 
-            # Aggiungi tooltip
             folium.GeoJsonTooltip(
                 fields=['NIL', 'connettività'],
                 aliases=['Quartiere', 'Punteggio'],
@@ -196,7 +174,6 @@ def main():
                             fill_color='blue'
                         ).add_to(m)
 
-            # Visualizza mappa
             st_folium(m, width=800, height=600)
 
         with col2:
