@@ -48,7 +48,7 @@ def calculate_isochrone(G, center_point, max_dist):
     """Calcola l'isocrona per un punto dato"""
     try:
         # Proietta il punto centrale nello stesso CRS del grafo
-        center_point_proj = ox.project_geometry(center_point, to_crs=G.graph['crs'])[0]
+        center_point_proj = project_geometry(center_point, to_crs=G.graph['crs'])[0]
         
         # Trova il nodo più vicino
         center_node = ox.nearest_nodes(G, center_point_proj.x, center_point_proj.y)
@@ -63,7 +63,7 @@ def calculate_isochrone(G, center_point, max_dist):
         isochrone = nodes.unary_union.convex_hull
         
         # Riproietta l'isocrona in WGS84
-        isochrone = ox.project_geometry(isochrone, G.graph['crs'], to_crs='EPSG:4326')[0]
+        isochrone = project_geometry(isochrone, G.graph['crs'], to_crs='EPSG:4326')[0]
         
         return isochrone
     except Exception as e:
