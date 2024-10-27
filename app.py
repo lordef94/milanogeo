@@ -197,6 +197,26 @@ def main():
 
             # Visualizza mappa
             st_folium(m, width=800, height=600)
+            
+            # Aggiungi descrizione dettagliata sotto la mappa
+            st.write("### Metodo di Calcolo del Punteggio di Connettività")
+            st.write("""
+                Il punteggio di connettività di ciascun quartiere è calcolato considerando il numero di servizi accessibili
+                entro un'isocrona, ovvero un'area raggiungibile entro un certo tempo di viaggio (in minuti). La distanza massima
+                raggiungibile è calcolata in funzione della velocità (5 km/h per camminare, 40 km/h per l'auto) moltiplicata
+                per il tempo selezionato dall'utente. 
+        
+                I servizi disponibili, come supermercati e farmacie, sono individuati tramite OpenStreetMap, una piattaforma
+                di dati geografici open-source. Il numero di servizi all'interno dell'isocrona viene conteggiato e utilizzato
+                per assegnare un punteggio di connettività relativo al quartiere.
+            """)
+        
+            st.write("### Fonti dei Dati")
+            st.write("""
+                - **OpenStreetMap**: utilizzato per i dati di rete stradale e per individuare i punti di interesse (POI).
+                - **Geopandas e Folium**: utilizzati per la gestione dei dati geografici e la visualizzazione su mappa.
+                - **OSMnx**: utilizzato per scaricare e proiettare la rete stradale, calcolando le isocrone di connettività.
+            """)
 
         with col2:
             st.header('Statistiche')
