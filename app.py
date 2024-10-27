@@ -9,6 +9,7 @@ from streamlit_folium import st_folium
 import matplotlib.pyplot as plt
 from pathlib import Path
 import warnings
+from osmnx.projection import project_geometry
 warnings.filterwarnings('ignore')
 
 # Funzione per caricare il GeoJSON
