@@ -20,6 +20,16 @@ def load_geojson(filepath):
         st.error(f"Errore nel caricamento del GeoJSON: {str(e)}")
         return None
 
+# Funzione per ottenere POI da OpenStreetMap
+def get_amenities(place, tags):
+    """Scarica i POI da OpenStreetMap in base ai tag specificati"""
+    try:
+        amenities = ox.geometries_from_place(place, tags)
+        return amenities
+    except Exception as e:
+        st.warning(f"Errore nel recupero dei servizi: {str(e)}")
+        return None
+
 # Configurazione della cache
 @st.cache_data(ttl=3600)
 def get_street_network(place, network_type):
