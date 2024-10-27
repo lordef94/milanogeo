@@ -99,7 +99,7 @@ def main():
 
     with col1:
         # Caricamento dati
-        quartieri = load_geojson('quartieri_milano.geojson')
+        quartieri = load_geojson('data/quartieri_milano.geojson')
         if quartieri is None:
             st.error("Impossibile procedere senza i dati dei quartieri")
             return
