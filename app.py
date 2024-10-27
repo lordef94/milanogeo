@@ -13,45 +13,41 @@ warnings.filterwarnings('ignore')
 
 # Configurazione della cache
 @st.cache_data(ttl=3600)
-def load_geojson(file_path):
-    """Carica e prepara i dati GeoJSON dei quartieri"""
-    try:
-        quartieri = gpd.read_file(file_path)
-        quartieri = quartieri.set_geometry('geometry')
-        return quartieri.to_crs(epsg=4326)
-    except Exception as e:
-        st.error(f"Errore nel caricamento del file GeoJSON: {str(e)}")
-        return None
-
-@st.cache_data(ttl=3600)
 def get_street_network(place, network_type):
-    """Scarica e cached la rete stradale"""
+    """Scarica e proietta la rete stradale"""
     try:
         with st.spinner('Scaricamento della rete stradale...'):
+            # Scarica il grafo
             G = ox.graph_from_place(place, network_type=network_type)
-        return G
+            # Proietta il grafo nel sistema di coordinate UTM appropriato
+            G = ox.project_graph(G)
+            return G
     except Exception as e:
         st.error(f"Errore nel recupero della rete stradale: {str(e)}")
-        return None
-
-@st.cache_data(ttl=3600)
-def get_amenities(place, tags):
-    """Scarica e cached i punti di interesse"""
-    try:
-        with st.spinner('Scaricamento dei servizi...'):
-            poi = ox.geometries_from_place(place, tags)
-        return poi
-    except Exception as e:
-        st.error(f"Errore nel recupero dei servizi: {str(e)}")
         return None
 
 def calculate_isochrone(G, center_point, max_dist):
     """Calcola l'isocrona per un punto dato"""
     try:
-        center_node = ox.nearest_nodes(G, center_point.x, center_point.y)
+        # Proietta il punto centrale nello stesso CRS del grafo
+        center_point_proj = ox.project_geometry(center_point, to_crs=G.graph['crs'])[0]
+        
+        # Trova il nodo più vicino
+        center_node = ox.nearest_nodes(G, center_point_proj.x, center_point_proj.y)
+        
+        # Calcola il subgrafo
         subgraph = nx.ego_graph(G, center_node, radius=max_dist, distance='length')
+        
+        # Converti il subgrafo in GeoDataFrame
         nodes, edges = ox.graph_to_gdfs(subgraph)
-        return nodes.unary_union.convex_hull
+        
+        # Crea l'isocrona
+        isochrone = nodes.unary_union.convex_hull
+        
+        # Riproietta l'isocrona in WGS84
+        isochrone = ox.project_geometry(isochrone, G.graph['crs'], to_crs='EPSG:4326')[0]
+        
+        return isochrone
     except Exception as e:
         st.warning(f"Errore nel calcolo dell'isocrona: {str(e)}")
         return None
@@ -94,11 +90,9 @@ def main():
 
         show_services = st.checkbox('Mostra i servizi sulla mappa')
 
-    # Layout principale
-    col1, col2 = st.columns([2, 1])
-
-    with col1:
-        # Caricamento dati
+    # Caricamento dati
+    try:
+        # Carica quartieri
         quartieri = load_geojson('quartieri_milano.geojson')
         if quartieri is None:
             st.error("Impossibile procedere senza i dati dei quartieri")
@@ -136,74 +130,68 @@ def main():
                         score = len(services_in_area)
                     else:
                         score = 0
-                except Exception:
+                except Exception as e:
+                    st.warning(f"Errore nel calcolo del punteggio per il quartiere {row['NIL']}: {str(e)}")
                     score = 0
                 connectivity_scores.append(score)
 
             quartieri['connettività'] = connectivity_scores
             quartieri['punteggio_norm'] = quartieri['connettività'] / quartieri['connettività'].max()
 
-        # Creazione mappa
-        m = folium.Map(location=[45.4642, 9.19], zoom_start=12)
+        # Visualizzazione risultati
+        col1, col2 = st.columns([2, 1])
 
-        # Choropleth layer
-        choropleth = folium.Choropleth(
-            geo_data=quartieri,
-            name='Connettività',
-            data=quartieri,
-            columns=['NIL', 'punteggio_norm'],
-            key_on='feature.properties.NIL',
-            fill_color='YlGn',
-            fill_opacity=0.7,
-            line_opacity=0.2,
-            legend_name='Punteggio di Connettività'
-        ).add_to(m)
+        with col1:
+            # Creazione mappa
+            m = folium.Map(location=[45.4642, 9.19], zoom_start=12)
 
-        # Aggiungi tooltip
-        folium.GeoJsonTooltip(
-            fields=['NIL', 'connettività'],
-            aliases=['Quartiere', 'Punteggio'],
-            style=('background-color: white; color: #333333; font-family: arial; font-size: 12px; padding: 10px;')
-        ).add_to(choropleth.geojson)
+            # Choropleth layer
+            choropleth = folium.Choropleth(
+                geo_data=quartieri,
+                name='Connettività',
+                data=quartieri,
+                columns=['NIL', 'punteggio_norm'],
+                key_on='feature.properties.NIL',
+                fill_color='YlGn',
+                fill_opacity=0.7,
+                line_opacity=0.2,
+                legend_name='Punteggio di Connettività'
+            ).add_to(m)
 
-        # Aggiungi servizi se richiesto
-        if show_services:
-            for idx, row in poi.iterrows():
-                geom = row.geometry
-                if geom.geom_type == 'Point':
-                    folium.CircleMarker(
-                        location=[geom.y, geom.x],
-                        radius=2,
-                        color='blue',
-                        fill=True,
-                        fill_color='blue'
-                    ).add_to(m)
-                elif geom.geom_type == 'MultiPoint':
-                    for point in geom.geoms:
+            # Aggiungi tooltip
+            folium.GeoJsonTooltip(
+                fields=['NIL', 'connettività'],
+                aliases=['Quartiere', 'Punteggio'],
+                style=('background-color: white; color: #333333; font-family: arial; font-size: 12px; padding: 10px;')
+            ).add_to(choropleth.geojson)
+
+            if show_services:
+                for idx, row in poi.iterrows():
+                    geom = row.geometry
+                    if isinstance(geom, Point):
                         folium.CircleMarker(
-                            location=[point.y, point.x],
+                            location=[geom.y, geom.x],
                             radius=2,
                             color='blue',
                             fill=True,
                             fill_color='blue'
                         ).add_to(m)
 
-        # Visualizza mappa
-        st_folium(m, width=800, height=600)
+            # Visualizza mappa
+            st_folium(m, width=800, height=600)
 
-    with col2:
-        st.header('Risultati')
-        
-        # Statistiche generali
-        st.subheader('Statistiche Generali')
-        st.write(f"Numero totale di servizi: {len(poi)}")
-        st.write(f"Punteggio medio: {quartieri['connettività'].mean():.2f}")
-        st.write(f"Punteggio massimo: {quartieri['connettività'].max():.0f}")
-        
-        # Top 10 quartieri
-        st.subheader('Top 10 Quartieri')
-        top_10 = quartieri.sort_values(by='connettività', ascending=False)[['NIL', 'connettività']].head(10)
-        st.dataframe(top_10)
+        with col2:
+            st.header('Statistiche')
+            st.write(f"Numero totale di servizi: {len(poi)}")
+            st.write(f"Punteggio medio: {quartieri['connettività'].mean():.2f}")
+            st.write(f"Punteggio massimo: {quartieri['connettività'].max():.0f}")
+            
+            st.subheader('Top 10 Quartieri')
+            top_10 = quartieri.sort_values(by='connettività', ascending=False)[['NIL', 'connettività']].head(10)
+            st.dataframe(top_10)
+
+    except Exception as e:
+        st.error(f"Si è verificato un errore: {str(e)}")
 
 if __name__ == "__main__":
     main()
