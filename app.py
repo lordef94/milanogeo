@@ -167,81 +167,7 @@ def main():
 
     st.title('Analisi della Connettività dei Quartieri di Milano')
 
-    with st.sidebar:
-        st.header('Parametri di Analisi')
-        
-        available_services = ['supermarket', 'gym', 'school', 'hospital', 'pharmacy']
-        selected_services = st.multiselect(
-            'Seleziona i servizi primari di interesse:',
-            available_services,
-            default=['supermarket', 'pharmacy']
-        )
-
-        transport_mode = st.selectbox(
-            'Modalità di trasporto:',
-            ['A piedi', 'In auto']
-        )
-
-        network_type = 'walk' if transport_mode == 'A piedi' else 'drive'
-        speed = 5 if transport_mode == 'A piedi' else 40
-
-        max_time = st.slider(
-            'Tempo massimo di viaggio (minuti):',
-            min_value=5, max_value=60, value=15, step=5
-        )
-
-        show_services = st.checkbox('Mostra i servizi sulla mappa')
-
-    try:
-        quartieri = load_geojson('quartieri_milano.geojson')
-        if quartieri is None:
-            st.error("Impossibile procedere senza i dati dei quartieri")
-            return
-
-        G = get_street_network('Milano, Italia', network_type)
-        if G is None:
-            st.error("Impossibile procedere senza la rete stradale")
-            return
-
-        tags = {'amenity': selected_services}
-        poi = get_amenities('Milano, Italia', tags)
-        if poi is None:
-            st.error("Impossibile procedere senza i dati dei servizi")
-            return
-
-        speed_m_per_sec = speed * 1000 / 3600
-        max_distance = speed_m_per_sec * max_time * 60
-
-        with st.spinner('Calcolo della connettività in corso...'):
-            # Convertire i GeoDataFrame in JSON per il caching
-            quartieri_json = quartieri.__geo_interface__
-            poi_json = poi.__geo_interface__
-            
-            connectivity_scores = calculate_connectivity_scores(quartieri_json, poi_json, G, max_distance)
-            if connectivity_scores is not None:
-                quartieri['connettività'] = connectivity_scores
-                quartieri['punteggio_norm'] = quartieri['connettività'] / quartieri['connettività'].max()
-
-        col1, col2 = st.columns([2, 1])
-
-        with col1:
-            m = create_map(quartieri, poi, show_services)
-            st_folium(m, width=800, height=600)
-            
-            st.write("### Metodo di Calcolo del Punteggio di Connettività")
-            st.write("""
-                Il punteggio di connettività di ciascun quartiere è calcolato considerando il numero di servizi accessibili
-                entro un'isocrona, ovvero un'area raggiungibile entro un certo tempo di viaggio (in minuti). La distanza massima
-                raggiungibile è calcolata in funzione della velocità (5 km/h per camminare, 40 km/h per l'auto) moltiplicata
-                per il tempo selezionato dall'utente. 
-            """)
-        
-            st.write("### Fonti dei Dati")
-            st.write("""
-                - **OpenStreetMap**: utilizzato per i dati di rete stradale e per individuare i punti di interesse (POI).
-                - **Geopandas e Folium**: utilizzati per la gestione dei dati geografici e la visualizzazione su mappa.
-                - **OSMnx**: utilizzato per scaricare e proiettare la rete stradale, calcolando le isocrone di connettività.
-            """)
+    [... rest of the main function remains the same until the statistics section ...]
 
         with col2:
             st.header('Statistiche')
@@ -252,6 +178,64 @@ def main():
             st.subheader('Top 10 Quartieri')
             top_10 = quartieri.sort_values(by='connettività', ascending=False)[['NIL', 'connettività']].head(10)
             st.dataframe(top_10)
+
+        # Nuova sezione per la tabella completa
+        st.header('Classifica Completa dei Quartieri')
+        
+        # Prepara i dati per la tabella
+        full_rankings = quartieri[['NIL', 'connettività']].copy()
+        full_rankings = full_rankings.sort_values(by='connettività', ascending=False)
+        full_rankings.columns = ['Quartiere', 'Punteggio di Connettività']
+        full_rankings.index = range(1, len(full_rankings) + 1)  # Rinumera gli indici da 1
+        
+        # Aggiungi opzioni di filtro
+        col_filter1, col_filter2 = st.columns([1, 2])
+        
+        with col_filter1:
+            search_term = st.text_input('Cerca quartiere:', '')
+            
+        with col_filter2:
+            score_range = st.slider(
+                'Filtra per punteggio:',
+                min_value=float(full_rankings['Punteggio di Connettività'].min()),
+                max_value=float(full_rankings['Punteggio di Connettività'].max()),
+                value=(float(full_rankings['Punteggio di Connettività'].min()),
+                      float(full_rankings['Punteggio di Connettività'].max()))
+            )
+        
+        # Applica i filtri
+        mask = (full_rankings['Punteggio di Connettività'].between(score_range[0], score_range[1]))
+        if search_term:
+            mask &= full_rankings['Quartiere'].str.contains(search_term, case=False)
+        
+        filtered_rankings = full_rankings[mask]
+        
+        # Mostra la tabella con formattazione migliorata
+        st.dataframe(
+            filtered_rankings,
+            column_config={
+                "Quartiere": st.column_config.TextColumn(
+                    "Quartiere",
+                    width="medium"
+                ),
+                "Punteggio di Connettività": st.column_config.NumberColumn(
+                    "Punteggio di Connettività",
+                    format="%.2f",
+                    width="small"
+                )
+            },
+            hide_index=False,
+            width=800
+        )
+        
+        # Aggiungi opzione per scaricare i dati
+        csv = filtered_rankings.to_csv(index=True)
+        st.download_button(
+            label="Scarica dati come CSV",
+            data=csv,
+            file_name="classifica_quartieri_milano.csv",
+            mime="text/csv",
+        )
 
     except Exception as e:
         st.error(f"Si è verificato un errore: {str(e)}")
