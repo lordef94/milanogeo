@@ -15,7 +15,6 @@ from bs4 import BeautifulSoup
 warnings.filterwarnings('ignore')
 
 def load_geojson(filepath):
-    """Carica un file GeoJSON e lo converte in GeoDataFrame"""
     try:
         return gpd.read_file(filepath)
     except Exception as e:
@@ -23,19 +22,16 @@ def load_geojson(filepath):
         return None
 
 def get_cache_dir():
-    """Crea e restituisce il percorso della directory cache"""
     script_dir = Path(__file__).parent.absolute()
     cache_dir = script_dir / 'cache'
     cache_dir.mkdir(exist_ok=True)
     return cache_dir
 
 def get_network_cache_path(network_type):
-    """Restituisce il percorso completo del file cache per il tipo di rete specificato"""
     cache_dir = get_cache_dir()
     return cache_dir / f'network_cache_{network_type}.pkl'
 
 def save_network_to_cache(G, network_type):
-    """Salva la rete stradale in un file cache"""
     try:
         cache_path = get_network_cache_path(network_type)
         with open(cache_path, 'wb') as f:
@@ -44,7 +40,6 @@ def save_network_to_cache(G, network_type):
         st.warning(f"Impossibile salvare la cache: {str(e)}")
 
 def load_network_from_cache(network_type):
-    """Carica la rete stradale dalla cache"""
     try:
         cache_path = get_network_cache_path(network_type)
         if cache_path.exists():
@@ -56,7 +51,6 @@ def load_network_from_cache(network_type):
 
 @st.cache_data(ttl=3600)
 def get_amenities(place, tags):
-    """Scarica i POI da OpenStreetMap in base ai tag specificati"""
     try:
         amenities = ox.geometries_from_place(place, tags)
         return amenities
@@ -66,7 +60,6 @@ def get_amenities(place, tags):
 
 @st.cache_resource
 def get_street_network(place, network_type):
-    """Scarica e proietta la rete stradale con gestione della cache"""
     G = load_network_from_cache(network_type)
     
     if G is None:
@@ -82,7 +75,6 @@ def get_street_network(place, network_type):
     return G
 
 def calculate_isochrone(G, center_point, max_dist):
-    """Calcola l'isocrona per un punto dato"""
     try:
         center_point_proj = ox.projection.project_geometry(center_point, to_crs=G.graph['crs'])[0]
         center_node = ox.nearest_nodes(G, center_point_proj.x, center_point_proj.y)
@@ -97,9 +89,7 @@ def calculate_isochrone(G, center_point, max_dist):
 
 @st.cache_data
 def calculate_connectivity_scores(_quartieri_json, _poi_json, _G, max_distance):
-    """Calcola i punteggi di connettività per tutti i quartieri"""
     try:
-        # Riconvertire i dati JSON in GeoDataFrame
         quartieri = gpd.GeoDataFrame.from_features(_quartieri_json)
         poi = gpd.GeoDataFrame.from_features(_poi_json)
         
@@ -125,7 +115,6 @@ def calculate_connectivity_scores(_quartieri_json, _poi_json, _G, max_distance):
         return None
 
 def scrape_real_estate_prices(place):
-    """Effettua lo scraping dei prezzi degli immobili da immobiliare.it"""
     try:
         url = f"https://www.immobiliare.it/vendita-case/{place.lower().replace(' ', '-')}/"
         headers = {
@@ -139,8 +128,9 @@ def scrape_real_estate_prices(place):
         soup = BeautifulSoup(response.content, "html.parser")
         prices = []
         for price_tag in soup.find_all("li", class_="nd-list__item--main-info"):
-            price = price_tag.find("span", class_="nd-list__item-price").get_text(strip=True)
-            prices.append(price)
+            price = price_tag.find("span", class_="nd-list__item-price")
+            if price:
+                prices.append(price.get_text(strip=True))
 
         return prices
     except Exception as e:
@@ -148,7 +138,6 @@ def scrape_real_estate_prices(place):
         return None
 
 def create_map(quartieri, poi, show_services):
-    """Crea la mappa con choropleth e servizi"""
     m = folium.Map(location=[45.4642, 9.19], zoom_start=12)
 
     choropleth = folium.Choropleth(
@@ -238,7 +227,6 @@ def main():
         max_distance = speed_m_per_sec * max_time * 60
 
         with st.spinner('Calcolo della connettività in corso...'):
-            # Convertire i GeoDataFrame in JSON per il caching
             quartieri_json = quartieri.__geo_interface__
             poi_json = poi.__geo_interface__
             
@@ -278,16 +266,13 @@ def main():
             top_10 = quartieri.sort_values(by='connettività', ascending=False)[['NIL', 'connettività']].head(10)
             st.dataframe(top_10)
 
-        # Nuova sezione per la tabella completa
         st.header('Classifica Completa dei Quartieri')
         
-        # Prepara i dati per la tabella
         full_rankings = quartieri[['NIL', 'connettività']].copy()
         full_rankings = full_rankings.sort_values(by='connettività', ascending=False)
         full_rankings.columns = ['Quartiere', 'Punteggio di Connettività']
-        full_rankings.index = range(1, len(full_rankings) + 1)  # Rinumera gli indici da 1
+        full_rankings.index = range(1, len(full_rankings) + 1)
         
-        # Aggiungi opzioni di filtro
         col_filter1, col_filter2 = st.columns([1, 2])
         
         with col_filter1:
@@ -302,14 +287,12 @@ def main():
                       float(full_rankings['Punteggio di Connettività'].max()))
             )
         
-        # Applica i filtri
         mask = (full_rankings['Punteggio di Connettività'].between(score_range[0], score_range[1]))
         if search_term:
             mask &= full_rankings['Quartiere'].str.contains(search_term, case=False)
         
         filtered_rankings = full_rankings[mask]
         
-        # Mostra la tabella con formattazione migliorata
         st.dataframe(
             filtered_rankings,
             column_config={
@@ -327,7 +310,6 @@ def main():
             width=800
         )
         
-        # Aggiungi opzione per scaricare i dati
         csv = filtered_rankings.to_csv(index=True)
         st.download_button(
             label="Scarica dati come CSV",
@@ -336,7 +318,6 @@ def main():
             mime="text/csv",
         )
 
-        # Sezione per i prezzi degli immobili
         st.header('Prezzi degli Immobili')
         st.write('Recupero dei prezzi degli immobili in corso...')
         real_estate_prices = scrape_real_estate_prices('milano')
