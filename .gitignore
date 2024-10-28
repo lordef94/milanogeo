@@ -1,0 +1,17 @@
+# Cache files
+cache/
+*.pkl
+network_cache_*.pkl
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Streamlit
+.streamlit/
+
+# Environment
+.env
+venv/
+ENV/
