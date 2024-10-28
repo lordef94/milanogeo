@@ -167,7 +167,81 @@ def main():
 
     st.title('Analisi della Connettività dei Quartieri di Milano')
 
-    [... rest of the main function remains the same until the statistics section ...]
+    with st.sidebar:
+        st.header('Parametri di Analisi')
+        
+        available_services = ['supermarket', 'gym', 'school', 'hospital', 'pharmacy']
+        selected_services = st.multiselect(
+            'Seleziona i servizi primari di interesse:',
+            available_services,
+            default=['supermarket', 'pharmacy']
+        )
+
+        transport_mode = st.selectbox(
+            'Modalità di trasporto:',
+            ['A piedi', 'In auto']
+        )
+
+        network_type = 'walk' if transport_mode == 'A piedi' else 'drive'
+        speed = 5 if transport_mode == 'A piedi' else 40
+
+        max_time = st.slider(
+            'Tempo massimo di viaggio (minuti):',
+            min_value=5, max_value=60, value=15, step=5
+        )
+
+        show_services = st.checkbox('Mostra i servizi sulla mappa')
+
+    try:
+        quartieri = load_geojson('quartieri_milano.geojson')
+        if quartieri is None:
+            st.error("Impossibile procedere senza i dati dei quartieri")
+            return
+
+        G = get_street_network('Milano, Italia', network_type)
+        if G is None:
+            st.error("Impossibile procedere senza la rete stradale")
+            return
+
+        tags = {'amenity': selected_services}
+        poi = get_amenities('Milano, Italia', tags)
+        if poi is None:
+            st.error("Impossibile procedere senza i dati dei servizi")
+            return
+
+        speed_m_per_sec = speed * 1000 / 3600
+        max_distance = speed_m_per_sec * max_time * 60
+
+        with st.spinner('Calcolo della connettività in corso...'):
+            # Convertire i GeoDataFrame in JSON per il caching
+            quartieri_json = quartieri.__geo_interface__
+            poi_json = poi.__geo_interface__
+            
+            connectivity_scores = calculate_connectivity_scores(quartieri_json, poi_json, G, max_distance)
+            if connectivity_scores is not None:
+                quartieri['connettività'] = connectivity_scores
+                quartieri['punteggio_norm'] = quartieri['connettività'] / quartieri['connettività'].max()
+
+        col1, col2 = st.columns([2, 1])
+
+        with col1:
+            m = create_map(quartieri, poi, show_services)
+            st_folium(m, width=800, height=600)
+            
+            st.write("### Metodo di Calcolo del Punteggio di Connettività")
+            st.write("""
+                Il punteggio di connettività di ciascun quartiere è calcolato considerando il numero di servizi accessibili
+                entro un'isocrona, ovvero un'area raggiungibile entro un certo tempo di viaggio (in minuti). La distanza massima
+                raggiungibile è calcolata in funzione della velocità (5 km/h per camminare, 40 km/h per l'auto) moltiplicata
+                per il tempo selezionato dall'utente. 
+            """)
+        
+            st.write("### Fonti dei Dati")
+            st.write("""
+                - **OpenStreetMap**: utilizzato per i dati di rete stradale e per individuare i punti di interesse (POI).
+                - **Geopandas e Folium**: utilizzati per la gestione dei dati geografici e la visualizzazione su mappa.
+                - **OSMnx**: utilizzato per scaricare e proiettare la rete stradale, calcolando le isocrone di connettività.
+            """)
 
         with col2:
             st.header('Statistiche')
