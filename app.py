@@ -79,41 +79,48 @@ def get_street_network(place, network_type):
     
     return G
 
-@st.cache_data
-def calculate_isochrone(_G, center_point, max_dist):
+def calculate_isochrone(G, center_point, max_dist):
     """Calcola l'isocrona per un punto dato"""
     try:
-        center_point_proj = ox.projection.project_geometry(center_point, to_crs=_G.graph['crs'])[0]
-        center_node = ox.nearest_nodes(_G, center_point_proj.x, center_point_proj.y)
-        subgraph = nx.ego_graph(_G, center_node, radius=max_dist, distance='length')
+        center_point_proj = ox.projection.project_geometry(center_point, to_crs=G.graph['crs'])[0]
+        center_node = ox.nearest_nodes(G, center_point_proj.x, center_point_proj.y)
+        subgraph = nx.ego_graph(G, center_node, radius=max_dist, distance='length')
         nodes, edges = ox.graph_to_gdfs(subgraph)
         isochrone = nodes.unary_union.convex_hull
-        isochrone = ox.projection.project_geometry(isochrone, _G.graph['crs'], to_crs='EPSG:4326')[0]
+        isochrone = ox.projection.project_geometry(isochrone, G.graph['crs'], to_crs='EPSG:4326')[0]
         return isochrone
     except Exception as e:
         st.warning(f"Errore nel calcolo dell'isocrona: {str(e)}")
         return None
 
 @st.cache_data
-def calculate_connectivity_scores(_quartieri, _G, _poi, max_distance):
+def calculate_connectivity_scores(_quartieri_json, _poi_json, _G, max_distance):
     """Calcola i punteggi di connettività per tutti i quartieri"""
-    connectivity_scores = []
-    
-    for idx, row in _quartieri.iterrows():
-        centroid = row.geometry.centroid
-        try:
-            isochrone = calculate_isochrone(_G, centroid, max_distance)
-            if isochrone is not None:
-                services_in_area = _poi[_poi.intersects(isochrone)]
-                score = len(services_in_area)
-            else:
+    try:
+        # Riconvertire i dati JSON in GeoDataFrame
+        quartieri = gpd.GeoDataFrame.from_features(_quartieri_json)
+        poi = gpd.GeoDataFrame.from_features(_poi_json)
+        
+        connectivity_scores = []
+        
+        for idx, row in quartieri.iterrows():
+            centroid = row.geometry.centroid
+            try:
+                isochrone = calculate_isochrone(_G, centroid, max_distance)
+                if isochrone is not None:
+                    services_in_area = poi[poi.intersects(isochrone)]
+                    score = len(services_in_area)
+                else:
+                    score = 0
+            except Exception as e:
+                st.warning(f"Errore nel calcolo del punteggio per il quartiere {row['NIL']}: {str(e)}")
                 score = 0
-        except Exception as e:
-            st.warning(f"Errore nel calcolo del punteggio per il quartiere {row['NIL']}: {str(e)}")
-            score = 0
-        connectivity_scores.append(score)
-    
-    return connectivity_scores
+            connectivity_scores.append(score)
+        
+        return connectivity_scores
+    except Exception as e:
+        st.error(f"Errore nel calcolo dei punteggi di connettività: {str(e)}")
+        return None
 
 def create_map(quartieri, poi, show_services):
     """Crea la mappa con choropleth e servizi"""
@@ -137,7 +144,7 @@ def create_map(quartieri, poi, show_services):
         style=('background-color: white; color: #333333; font-family: arial; font-size: 12px; padding: 10px;')
     ).add_to(choropleth.geojson)
 
-    if show_services:
+    if show_services and not poi.empty:
         for idx, row in poi.iterrows():
             geom = row.geometry
             if isinstance(geom, Point):
@@ -206,9 +213,14 @@ def main():
         max_distance = speed_m_per_sec * max_time * 60
 
         with st.spinner('Calcolo della connettività in corso...'):
-            connectivity_scores = calculate_connectivity_scores(quartieri, G, poi, max_distance)
-            quartieri['connettività'] = connectivity_scores
-            quartieri['punteggio_norm'] = quartieri['connettività'] / quartieri['connettività'].max()
+            # Convertire i GeoDataFrame in JSON per il caching
+            quartieri_json = quartieri.__geo_interface__
+            poi_json = poi.__geo_interface__
+            
+            connectivity_scores = calculate_connectivity_scores(quartieri_json, poi_json, G, max_distance)
+            if connectivity_scores is not None:
+                quartieri['connettività'] = connectivity_scores
+                quartieri['punteggio_norm'] = quartieri['connettività'] / quartieri['connettività'].max()
 
         col1, col2 = st.columns([2, 1])
 
