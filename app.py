@@ -10,6 +10,8 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import pickle
 import warnings
+import requests
+from bs4 import BeautifulSoup
 warnings.filterwarnings('ignore')
 
 def load_geojson(filepath):
@@ -122,6 +124,29 @@ def calculate_connectivity_scores(_quartieri_json, _poi_json, _G, max_distance):
         st.error(f"Errore nel calcolo dei punteggi di connettività: {str(e)}")
         return None
 
+def scrape_real_estate_prices(place):
+    """Effettua lo scraping dei prezzi degli immobili da immobiliare.it"""
+    try:
+        url = f"https://www.immobiliare.it/vendita-case/{place.lower().replace(' ', '-')}/"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.121 Safari/537.36"
+        }
+        response = requests.get(url, headers=headers)
+        if response.status_code != 200:
+            st.warning(f"Errore nella richiesta a Immobiliare.it: {response.status_code}")
+            return None
+
+        soup = BeautifulSoup(response.content, "html.parser")
+        prices = []
+        for price_tag in soup.find_all("li", class_="nd-list__item--main-info"):
+            price = price_tag.find("span", class_="nd-list__item-price").get_text(strip=True)
+            prices.append(price)
+
+        return prices
+    except Exception as e:
+        st.warning(f"Errore durante lo scraping dei prezzi immobiliari: {str(e)}")
+        return None
+
 def create_map(quartieri, poi, show_services):
     """Crea la mappa con choropleth e servizi"""
     m = folium.Map(location=[45.4642, 9.19], zoom_start=12)
@@ -161,7 +186,7 @@ def create_map(quartieri, poi, show_services):
 def main():
     st.set_page_config(
         page_title="Analisi Connettività Milano",
-        page_icon="🏙️",
+        page_icon="🌇",
         layout="wide"
     )
 
@@ -310,6 +335,17 @@ def main():
             file_name="classifica_quartieri_milano.csv",
             mime="text/csv",
         )
+
+        # Sezione per i prezzi degli immobili
+        st.header('Prezzi degli Immobili')
+        st.write('Recupero dei prezzi degli immobili in corso...')
+        real_estate_prices = scrape_real_estate_prices('milano')
+        if real_estate_prices:
+            st.write(f"Numero di annunci trovati: {len(real_estate_prices)}")
+            for price in real_estate_prices:
+                st.write(price)
+        else:
+            st.write("Nessun prezzo trovato.")
 
     except Exception as e:
         st.error(f"Si è verificato un errore: {str(e)}")
